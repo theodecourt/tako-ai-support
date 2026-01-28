@@ -53,6 +53,29 @@ def invoke_pagamento_atrasado_agent(user_message: str) -> dict:
     return json.loads(final_text)
 
 
+# -------- Bedrock demissao/recisao agent invocation --------
+
+AGENT_DEMISSAO_RESCISAO_ID = "VPYOI3J5UU"
+AGENT_DEMISSAO_RESCISAO_ALIAS_ID = "KTGEIAAQC3"
+
+def invoke_demissao_recisao_agent(user_message: str) -> dict:
+    response = bedrock.invoke_agent(
+        agentId=AGENT_DEMISSAO_RESCISAO_ID,
+        agentAliasId=AGENT_DEMISSAO_RESCISAO_ALIAS_ID,
+        sessionId="tako-session-demissao-rescisao",
+        inputText=user_message
+    )
+
+    final_text = ""
+
+    # Agents retornam stream
+    for event in response.get("completion", []):
+        if "chunk" in event:
+            final_text += event["chunk"]["bytes"].decode("utf-8")
+
+    return json.loads(final_text)
+
+
 # -------- Prompt loading --------
 
 def load_prompt(name: str) -> str:
@@ -156,11 +179,17 @@ def handle_erro_folha(context: dict) -> dict:
 
 
 def handle_demissao_rescisao(context: dict) -> dict:
+
+    user_message = context["user_message"]
+
+    agent_output = invoke_demissao_recisao_agent(user_message)
+
     return {
-        "status": "handled",
         "agent": "demissao_rescisao_agent",
-        "message": "Estamos analisando as informações relacionadas ao processo de rescisão."
+        "draft_answer": agent_output.get("draft_answer"),
+        "confidence_score": agent_output.get("confidence_score")
     }
+
 
 
 def handle_conformidade_legal(context: dict) -> dict:
