@@ -106,7 +106,7 @@ def parse_message_analysis(output_text: str) -> dict:
 
 # -------- Erro folha parsing --------
 
-def parse_erro_folha(output_text: str) -> dict:
+def parser_generico(output_text: str) -> dict:
     parsed = json.loads(output_text)
 
     draft_answer = parsed.get("draft_answer")
@@ -146,7 +146,7 @@ def handle_erro_folha(context: dict) -> dict:
 
     flow_response = invoke_flow(full_prompt)
     agent_output = extract_flow_output(flow_response)
-    parsed_output = parse_erro_folha(agent_output)
+    parsed_output = parser_generico(agent_output)
 
     return {
         "agent": "erro_folha_agent",
@@ -164,11 +164,33 @@ def handle_demissao_rescisao(context: dict) -> dict:
 
 
 def handle_conformidade_legal(context: dict) -> dict:
+    """
+    Handles legal compliance questions using the general Bedrock Flow.
+    """
+
+    user_message = context.get("user_message")
+
+    base_prompt = load_prompt("conformidade_legal_agent")
+
+    full_prompt = f"""{base_prompt}
+
+    User input:
+    \"\"\"
+    {user_message}
+    \"\"\"
+    """
+
+    flow_response = invoke_flow(full_prompt)
+    agent_output = extract_flow_output(flow_response)
+
+    parsed_output = parser_generico(agent_output)
+
     return {
-        "status": "handled",
         "agent": "conformidade_legal_agent",
-        "message": "Vamos verificar a legislação aplicável para te responder corretamente."
+        "draft_answer": parsed_output["draft_answer"],
+        "confidence_score": parsed_output["confidence_score"]
     }
+
 
 
 def handle_duvida_geral(context: dict) -> dict:
