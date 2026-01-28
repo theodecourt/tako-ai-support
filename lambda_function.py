@@ -194,17 +194,64 @@ def handle_conformidade_legal(context: dict) -> dict:
 
 
 def handle_duvida_geral(context: dict) -> dict:
+    user_message = context.get("user_message")
+
+    # Load duvida geral prompt
+    base_prompt = load_prompt("duvida_geral_agent")
+
+    full_prompt = f"""{base_prompt}
+
+    User input:
+    \"\"\"
+    {user_message}
+    \"\"\"
+    """
+
+    # Call Bedrock Flow
+    flow_response = invoke_flow(full_prompt)
+    agent_output = extract_flow_output(flow_response)
+
+    # Parse agent output
+    parsed_output = parser_generico(agent_output)
+
     return {
-        "status": "handled",
         "agent": "duvida_geral_agent",
-        "message": "Vamos analisar sua dúvida e te responder em seguida."
+        "draft_answer": parsed_output["draft_answer"],
+        "confidence_score": parsed_output["confidence_score"]
     }
 
+
 def handle_fallback(context: dict) -> dict:
+    """
+    Handles fallback cases (out-of-scope questions).
+    """
+
+    user_message = context.get("user_message", "")
+
+    # Load fallback prompt
+    base_prompt = load_prompt("fallback_agent")
+
+    full_prompt = f"""{base_prompt}
+
+    User input:
+    \"\"\"
+    {user_message}
+    \"\"\"
+    """
+
+    # Invoke Bedrock flow
+    flow_response = invoke_flow(full_prompt)
+
+    # Extract raw model output (string)
+    output_text = extract_flow_output(flow_response)
+
+    # Parse JSON output
+    parsed_output = parser_generico(output_text)
+
     return {
-        "status": "fallback",
-        "agent": "human_escalation",
-        "message": "Vamos encaminhar sua mensagem para um especialista."
+        "agent": "fallback_agent",
+        "draft_answer": parsed_output["draft_answer"],
+        "confidence_score": parsed_output["confidence_score"]
     }
 
 # -------- Defines which intent-specific agent to invoke --------
