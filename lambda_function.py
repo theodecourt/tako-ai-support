@@ -8,11 +8,11 @@ bedrock = boto3.client(
     region_name="us-east-2"
 )
 
-FLOW_ID = "GDE6GAZUSZ"
-FLOW_ALIAS_ID = "ZJ1SS18PPX"
-
 
 # -------- Bedrock Flow invocation --------
+
+FLOW_ID = "GDE6GAZUSZ"
+FLOW_ALIAS_ID = "ZJ1SS18PPX"
 
 def invoke_flow(full_prompt: str) -> dict:
     return bedrock.invoke_flow(
@@ -28,6 +28,29 @@ def invoke_flow(full_prompt: str) -> dict:
             }
         ]
     )
+
+
+# -------- Bedrock salario atrasado agent invocation --------
+
+AGENT_PAGAMENTO_ATRASADO_ID = "GUCCGBRVAH"
+AGENT_PAGAMENTO_ATRASADO_ALIAS_ID = "YL0WI2IU3Z"
+
+def invoke_pagamento_atrasado_agent(user_message: str) -> dict:
+    response = bedrock.invoke_agent(
+        agentId=AGENT_PAGAMENTO_ATRASADO_ID,
+        agentAliasId=AGENT_PAGAMENTO_ATRASADO_ALIAS_ID,
+        sessionId="tako-session-1",
+        inputText=user_message
+    )
+
+    final_text = ""
+
+    # Agents retornam stream
+    for event in response.get("completion", []):
+        if "chunk" in event:
+            final_text += event["chunk"]["bytes"].decode("utf-8")
+
+    return json.loads(final_text)
 
 
 # -------- Prompt loading --------
@@ -58,10 +81,6 @@ def extract_flow_output(flow_response: dict) -> str:
 # -------- Message analysis parsing --------
 
 def parse_message_analysis(output_text: str) -> dict:
-    """
-    Parses the JSON returned by the model and extracts
-    intent, tone, risks and intermediate message.
-    """
     parsed = json.loads(output_text)
 
     intencao = parsed.get("intencao")
@@ -85,21 +104,54 @@ def parse_message_analysis(output_text: str) -> dict:
         "mensagem_intermediaria": mensagem_intermediaria
     }
 
+# -------- Erro folha parsing --------
+
+def parse_erro_folha(output_text: str) -> dict:
+    parsed = json.loads(output_text)
+
+    draft_answer = parsed.get("draft_answer")
+    confidence_score = parsed.get("confidence_score")
+
+    return {
+        "draft_answer": draft_answer,
+        "confidence_score": confidence_score
+    }
+
 # -------- Intent-specific resolution agents --------
 
 def handle_pagamento_atrasado(context: dict) -> dict:
+    user_message = context["user_message"]
+
+    agent_response = invoke_pagamento_atrasado_agent(user_message)
+
     return {
-        "status": "handled",
         "agent": "pagamento_atrasado_agent",
-        "message": "Estamos analisando possíveis atrasos de pagamento com base nas informações disponíveis."
+        "draft_answer": agent_response["draft_answer"],
+        "confidence_score": agent_response["confidence_score"]
     }
 
 
 def handle_erro_folha(context: dict) -> dict:
+
+    base_prompt = load_prompt("erro_folha_agent")
+
+    full_prompt = f"""{base_prompt}
+
+    User input:
+    \"\"\"
+    {context["user_message"]}
+    \"\"\"
+
+    """
+
+    flow_response = invoke_flow(full_prompt)
+    agent_output = extract_flow_output(flow_response)
+    parsed_output = parse_erro_folha(agent_output)
+
     return {
-        "status": "handled",
         "agent": "erro_folha_agent",
-        "message": "Vamos verificar possíveis inconsistências nos cálculos da folha de pagamento."
+        "draft_answer": parsed_output["draft_answer"],
+        "confidence_score": parsed_output["confidence_score"]
     }
 
 
