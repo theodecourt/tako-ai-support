@@ -303,6 +303,33 @@ def route_by_intent(intent: str, context: dict) -> dict:
 
     return handle_fallback(context)
 
+# -------- Define escalation --------
+
+AUTO_SEND = "auto_send"
+HUMAN_REVIEW = "human_review"
+HUMAN_ONLY = "human_only"
+
+def decide_escalation(tom: str, riscos: dict, confidence_score: float) -> str:
+    risco_legal = riscos.get("legal", False)
+    risco_financeiro = riscos.get("financeiro", False)
+    risco_emocional = riscos.get("emocional", False)
+
+    if confidence_score <= 0.6:
+        return HUMAN_ONLY
+
+    if (risco_legal or risco_financeiro) and risco_emocional and confidence_score < 0.85:
+        return HUMAN_ONLY
+
+    if confidence_score >= 0.85:
+        return AUTO_SEND
+
+    if confidence_score >= 0.75 and not risco_legal:
+        return AUTO_SEND
+
+    if confidence_score >= 0.65 and not any([risco_legal, risco_financeiro, risco_emocional]):
+        return AUTO_SEND
+
+    return HUMAN_REVIEW
 
 
 # -------- Lambda handler --------
@@ -347,13 +374,21 @@ def lambda_handler(event, context):
         context=context
     )
 
+    escalation_decision = decide_escalation(
+        tom=analysis["tom"],
+        riscos=analysis["riscos"],
+        confidence_score=resolution.get("confidence_score", 0)
+    )
+
     # Final response (ready for Agent 2)
     return {
         "statusCode": 200,
         "body": json.dumps(
             {
                 "mensagem_intermediaria": analysis["mensagem_intermediaria"],
-                "resolution": resolution
+                "riscos": analysis["riscos"],         
+                "resolution": resolution,
+                "escalation": escalation_decision
             },
             ensure_ascii=False
         ),
@@ -361,4 +396,5 @@ def lambda_handler(event, context):
             "Content-Type": "application/json"
         }
     }
+
 
