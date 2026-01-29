@@ -377,6 +377,111 @@ def decide_escalation(tom: str, riscos: dict, confidence_score: float) -> str:
 
     return HUMAN_REVIEW
 
+# -------- Build resoponse generator prompt --------
+
+def build_rewrite_prompt(
+    user_message: str,
+    draft_answer: str,
+    tom: str,
+    escalation: str
+) -> str:
+    tone_instruction = TONE_INSTRUCTIONS.get(tom, TONE_INSTRUCTIONS["neutro"])
+
+    escalation_context = {
+        AUTO_SEND: (
+            "Esta resposta será enviada automaticamente ao usuário."
+        ),
+        HUMAN_REVIEW: (
+            "Esta resposta será enviada ao usuário como uma resposta parcial. "
+            "Deixe claro que um especialista irá revisar o caso."
+        ),
+        HUMAN_ONLY: (
+            "Esta resposta NÃO resolve o caso. "
+            "Ela deve apenas acolher o usuário e informar que o caso será tratado por um humano."
+        ),
+    }[escalation]
+
+    return f"""
+    Você é um assistente de comunicação da Tako, uma plataforma brasileira de folha de pagamento e RH.
+
+    Mensagem original do usuário:
+    \"\"\"
+    {user_message}
+    \"\"\"
+
+    Resposta técnica gerada:
+    \"\"\"
+    {draft_answer}
+    \"\"\"
+
+    Instruções de tom:
+    {tone_instruction}
+
+    Contexto de escalonamento:
+    {escalation_context}
+
+    Tarefa:
+    - Reescreva a resposta para o usuário final
+    - Mantenha precisão técnica
+    - NÃO adicione novas informações
+    - NÃO forneça aconselhamento jurídico
+    - Seja claro, humano e profissional
+    - Retorne APENAS o texto final da mensagem
+    """
+
+# -------- Tone instructions --------
+
+
+TONE_INSTRUCTIONS = {
+    "neutro": (
+        "Use um tom objetivo, claro e profissional. "
+        "Não adicione empatia excessiva nem linguagem emocional."
+    ),
+    "confuso": (
+        "Use um tom didático e paciente. "
+        "Explique os pontos com clareza e evite termos técnicos desnecessários."
+    ),
+    "frustrado": (
+        "Reconheça a frustração do usuário de forma respeitosa. "
+        "Evite discordar ou minimizar o problema."
+    ),
+    "irritado": (
+        "Não confronte o usuário. "
+        "Valide a insatisfação, evite linguagem defensiva e ajude a reduzir o conflito."
+    ),
+    "urgente": (
+        "Reconheça a urgência. "
+        "Seja direto, organizado e transmita senso de encaminhamento."
+    ),
+}
+
+# -------- Final response generator --------
+
+def compose_final_message(
+    user_message: str,
+    draft_answer: str,
+    escalation: str,
+    tom: str
+) -> str:
+
+    if tom == "neutro" and escalation == AUTO_SEND:
+        return draft_answer
+
+    rewrite_prompt = build_rewrite_prompt(
+        user_message=user_message,
+        draft_answer=draft_answer,
+        tom=tom,
+        escalation=escalation
+    )
+
+    flow_response = invoke_flow(rewrite_prompt)
+    rewritten_text = extract_flow_output(flow_response)
+
+    rewritten_text = rewritten_text.strip()
+    if not rewritten_text:
+        return draft_answer
+
+    return rewritten_text
 
 # -------- Lambda handler --------
 
@@ -426,15 +531,32 @@ def lambda_handler(event, context):
         confidence_score=resolution.get("confidence_score", 0)
     )
 
+    final_message = compose_final_message(
+        user_message= user_message,
+        draft_answer=resolution["draft_answer"],
+        escalation=escalation_decision,
+        tom=analysis["tom"]
+    )
+
+    # ADD LOG TO METADATA
+
     # Final response (ready for Agent 2)
     return {
         "statusCode": 200,
         "body": json.dumps(
             {
                 "mensagem_intermediaria": analysis["mensagem_intermediaria"],
-                "riscos": analysis["riscos"],         
-                "resolution": resolution,
-                "escalation": escalation_decision
+                "mensagem_final": final_message,          # 👈 NOVO
+                "tom": analysis["tom"],
+                "riscos": analysis["riscos"],
+                "escalation": escalation_decision,
+
+                # Opcional (recomendo manter em staging/debug)
+                "debug": {
+                    "agent": resolution.get("agent"),
+                    "draft_answer": resolution.get("draft_answer"),
+                    "confidence_score": resolution.get("confidence_score")
+                }
             },
             ensure_ascii=False
         ),
