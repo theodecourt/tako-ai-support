@@ -1,6 +1,8 @@
 import json
 import boto3
 from pathlib import Path
+import os
+import http.client
 
 # Bedrock client
 bedrock = boto3.client(
@@ -483,11 +485,61 @@ def compose_final_message(
 
     return rewritten_text
 
+# -------- Enviar mensagem para Z-API --------
+
+def send_text_to_zapi(phone: str, message: str):
+    ZAPI_INSTANCE_ID = os.environ["ZAPI_INSTANCE_ID"]
+    ZAPI_TOKEN = os.environ["ZAPI_TOKEN"]
+    ZAPI_CLIENT_TOKEN = os.environ["ZAPI_CLIENT_TOKEN"]
+
+    ZAPI_HOST = "api.z-api.io"
+    ZAPI_PATH = f"/instances/{ZAPI_INSTANCE_ID}/token/{ZAPI_TOKEN}/send-text"
+
+    payload = {
+        "phone": phone,
+        "message": message
+    }
+
+    headers = {
+        "client-token": ZAPI_CLIENT_TOKEN,
+        "Content-Type": "application/json"
+    }
+
+    conn = http.client.HTTPSConnection(ZAPI_HOST)
+
+    try:
+        conn.request(
+            "POST",
+            ZAPI_PATH,
+            body=json.dumps(payload, ensure_ascii=False).encode("utf-8"),
+            headers=headers
+        )
+        response = conn.getresponse()
+        response.read()
+
+    except Exception as e:
+        print(f"[ZAPI] Erro ao enviar mensagem: {e}")
+
+    finally:
+        conn.close()
+
 # -------- Lambda handler --------
 
 def lambda_handler(event, context):
-    user_message = event.get("message", "Meu salário não caiu ainda")
+    body = json.loads(event.get("body", "{}"))
 
+    user_id = body.get("phone")
+
+    user_message = "Ocorreu um erro ao processar o input do usuario"
+    if body.get("text"):
+        user_message = body["text"].get("message")
+
+    if not user_id or not user_message:
+        return {
+            "statusCode": 200,
+            "body": json.dumps({"status": "ignored"})
+        }
+    
     # Load base prompt
     base_prompt = load_prompt("message_analysis")
 
@@ -510,7 +562,20 @@ def lambda_handler(event, context):
     # Parse into structured fields
     analysis = parse_message_analysis(output_text)
 
-    # EARLY RESPONSE FOR THE USER
+    # Early response for the user
+    if analysis["mensagem_intermediaria"]:
+        send_text_to_zapi(
+            phone=user_id,
+            message=analysis["mensagem_intermediaria"]
+        )
+
+    return {
+            "statusCode": 200,
+            "body": json.dumps({
+                "status": "early_response_sent",
+                "user_id": user_id
+            })
+        }
 
     context = {
         "user_message": user_message,
@@ -564,5 +629,3 @@ def lambda_handler(event, context):
             "Content-Type": "application/json"
         }
     }
-
-
