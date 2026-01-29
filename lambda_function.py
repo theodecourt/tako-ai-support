@@ -33,7 +33,7 @@ def invoke_flow(full_prompt: str) -> dict:
 # -------- Bedrock salario atrasado agent invocation --------
 
 AGENT_PAGAMENTO_ATRASADO_ID = "GUCCGBRVAH"
-AGENT_PAGAMENTO_ATRASADO_ALIAS_ID = "YL0WI2IU3Z"
+AGENT_PAGAMENTO_ATRASADO_ALIAS_ID = "S4BTLYMXTT"
 
 def invoke_pagamento_atrasado_agent(user_message: str) -> dict:
     response = bedrock.invoke_agent(
@@ -50,7 +50,22 @@ def invoke_pagamento_atrasado_agent(user_message: str) -> dict:
         if "chunk" in event:
             final_text += event["chunk"]["bytes"].decode("utf-8")
 
-    return json.loads(final_text)
+    final_text = final_text.strip()
+
+    # --- Tratativas simples ---
+    if not final_text:
+        return {
+            "draft_answer": "Não foi possível gerar uma resposta automática para este caso no momento.",
+            "confidence_score": 0.0
+        }
+
+    try:
+        return json.loads(final_text)
+    except json.JSONDecodeError:
+        return {
+            "draft_answer": "A resposta automática gerada não pôde ser interpretada corretamente.",
+            "confidence_score": 0.0
+        }
 
 
 # -------- Bedrock demissao/recisao agent invocation --------
@@ -73,7 +88,38 @@ def invoke_demissao_recisao_agent(user_message: str) -> dict:
         if "chunk" in event:
             final_text += event["chunk"]["bytes"].decode("utf-8")
 
-    return json.loads(final_text)
+    final_text = final_text.strip()
+
+    if not final_text:
+        return {
+            "draft_answer": (
+                "Não foi possível gerar uma resposta automática para essa solicitação "
+                "no momento. A equipe da Tako irá analisar o caso."
+            ),
+            "confidence_score": 0.0
+        }
+
+    try:
+        parsed = json.loads(final_text)
+
+        # Blindagem extra: garante campos mínimos
+        return {
+            "draft_answer": parsed.get(
+                "draft_answer",
+                "Não foi possível gerar uma resposta automática completa para esse caso."
+            ),
+            "confidence_score": parsed.get("confidence_score", 0.0)
+        }
+
+    except json.JSONDecodeError:
+        # Caso o agente responda texto puro
+        return {
+            "draft_answer": (
+                "Recebemos sua solicitação sobre demissão ou rescisão. "
+                "Ela exige uma análise mais cuidadosa e será encaminhada para revisão."
+            ),
+            "confidence_score": 0.0
+        }
 
 
 # -------- Prompt loading --------
@@ -317,7 +363,7 @@ def decide_escalation(tom: str, riscos: dict, confidence_score: float) -> str:
     if confidence_score <= 0.6:
         return HUMAN_ONLY
 
-    if (risco_legal or risco_financeiro) and risco_emocional and confidence_score < 0.85:
+    if (risco_legal or risco_financeiro) and risco_emocional and confidence_score < 0.8:
         return HUMAN_ONLY
 
     if confidence_score >= 0.85:
