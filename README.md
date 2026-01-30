@@ -19,8 +19,8 @@ https://youtu.be/ZVGCDaKzsq8
 ---
 
 ### 💬 Live WhatsApp Demo
-https://wa.me/5511922884327?text=Em%20uma%20demiss%C3%A3o%20sem%20justa%20causa%2C%20quais%20verbas%20s%C3%A3o%20obrigat%C3%B3rias%3F  
-
+ https://bit.ly/tako-whatsapp-demo
+ 
 **Best use case:**  
 This chatbot is designed for B2B payroll and HR scenarios involving operational, legal, or financial risk.  
 It performs best when asked concrete questions about payroll execution, terminations, compliance, deadlines, penalties, or error handling.
