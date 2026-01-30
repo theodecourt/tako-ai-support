@@ -53,3 +53,6 @@ As a result, the code here should be read as a **reference implementation**, not
 ## 📄 Final Report
 
 The complete technical report for this project is available below:
+
+[Tako Take-Home Exercise.pdf](https://github.com/user-attachments/files/24975074/Tako.Take-Home.Exercise.pdf)
+
