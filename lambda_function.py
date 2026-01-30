@@ -5,6 +5,7 @@ import os
 import http.client
 import time
 from botocore.exceptions import ClientError
+from decimal import Decimal
 
 # Bedrock client
 bedrock = boto3.client(
@@ -583,6 +584,37 @@ def release_user_mutex(user_id: str):
         print(f"[MUTEX] Erro ao liberar lock para {user_id}: {e}")
 
 
+# -------- Metadata no DynamoDB --------
+
+dynamodb = boto3.resource("dynamodb")
+conversation_table = dynamodb.Table("tako_conversations")
+
+
+def store_conversation(
+    user_id: str,
+    user_message: str,
+    analysis: dict,
+    resolution: dict,
+    escalation: str,
+    final_message: str
+):
+    item = {
+        "user_id": user_id,
+        "timestamp": int(time.time()),
+        "user_message": user_message,
+        "mensagem_intermediaria": analysis.get("mensagem_intermediaria"),
+        "mensagem_final": final_message,
+        "intencao": analysis.get("intencao"),
+        "tom": analysis.get("tom"),
+        "riscos": analysis.get("riscos"),
+        "escalation": escalation,
+        "agent": resolution.get("agent"),
+        "confidence_score": Decimal(str(resolution.get("confidence_score", 0)))
+    }
+
+    conversation_table.put_item(Item=item)
+
+
 # -------- Lambda handler --------
 
 def lambda_handler(event, context):
@@ -689,7 +721,15 @@ def lambda_handler(event, context):
 
     release_user_mutex(user_id)
 
-    # ADD LOG TO METADATA
+    store_conversation(
+        user_id=user_id,
+        user_message=user_message,
+        analysis=analysis,
+        resolution=resolution,
+        escalation=escalation_decision,
+        final_message=final_message
+    )
+
 
     print("[FINAL RESPONSE]", json.dumps(
         {
