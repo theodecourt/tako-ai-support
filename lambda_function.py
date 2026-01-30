@@ -393,27 +393,38 @@ def build_rewrite_prompt(
 
     escalation_context = {
         AUTO_SEND: (
-            "Esta resposta será enviada automaticamente ao usuário."
+            "Esta resposta será enviada automaticamente ao usuário e resolve o caso."
         ),
         HUMAN_REVIEW: (
-            "Esta resposta será enviada ao usuário como uma resposta parcial. "
-            "Deixe claro que um especialista irá revisar o caso."
+            "Esta resposta entrega valor parcial ao usuário. "
+            "Um especialista da Tako já está no fluxo e irá revisar o caso. "
+            "NÃO diga para o usuário buscar fontes externas."
         ),
         HUMAN_ONLY: (
             "Esta resposta NÃO resolve o caso. "
-            "Ela deve apenas acolher o usuário e informar que o caso será tratado por um humano."
+            "Ela deve apenas informar que o caso será tratado por um especialista da Tako. "
+            "NÃO forneça recomendações externas, links, leis ou orientações jurídicas."
         ),
     }[escalation]
 
     return f"""
-    Você é um assistente de comunicação da Tako, uma plataforma brasileira de folha de pagamento e RH.
+    Você é um assistente de comunicação da Tako, uma plataforma brasileira de automação de folha de pagamento e conformidade trabalhista.
+
+    CONTEXTO IMPORTANTE:
+    - Esta conversa acontece no WhatsApp.
+    - O usuário já recebeu uma mensagem intermediária informando que a Tako está analisando o caso.
+    - Esta mensagem é a resposta final do chatbot neste momento.
+    - NÃO use linguagem de e-mail.
+    - NÃO use saudações formais (ex: "Prezado", "Atenciosamente").
+    - NÃO assine mensagens.
+    - Seja direto, humano e adequado a WhatsApp.
 
     Mensagem original do usuário:
     \"\"\"
     {user_message}
     \"\"\"
 
-    Resposta técnica gerada:
+    Resposta técnica gerada (base interna):
     \"\"\"
     {draft_answer}
     \"\"\"
@@ -424,22 +435,30 @@ def build_rewrite_prompt(
     Contexto de escalonamento:
     {escalation_context}
 
+    REGRAS OBRIGATÓRIAS:
+    - NÃO recomende que o usuário consulte a CLT, advogados ou fontes externas
+    - NÃO forneça aconselhamento jurídico
+    - NÃO adicione informações novas
+    - NÃO contradiga a resposta técnica
+    - NÃO use linguagem excessivamente formal
+    - NÃO use emojis
+
     Tarefa:
     - Reescreva a resposta para o usuário final
     - Mantenha precisão técnica
-    - NÃO adicione novas informações
-    - NÃO forneça aconselhamento jurídico
-    - Seja claro, humano e profissional
+    - Linguagem natural de WhatsApp
     - Retorne APENAS o texto final da mensagem
     """
 
-# -------- Tone instructions --------
+
+    # -------- Tone instructions --------
 
 
 TONE_INSTRUCTIONS = {
     "neutro": (
         "Use um tom objetivo, claro e profissional. "
         "Não adicione empatia excessiva nem linguagem emocional."
+        "A linguagem deve parecer uma mensagem de WhatsApp, não um e-mail."
     ),
     "confuso": (
         "Use um tom didático e paciente. "
@@ -571,8 +590,23 @@ def lambda_handler(event, context):
     user_id = body.get("phone")
 
     user_message = "Ocorreu um erro ao processar o input do usuario"
-    if body.get("text"):
-        user_message = body["text"].get("message")
+
+    if body.get("text") and body["text"].get("message"):
+        user_message = body["text"]["message"]
+    else:
+        # Mensagem não textual (imagem, áudio, etc.)
+        send_text_to_zapi(
+            phone=user_id,
+            message=(
+                "No momento, consigo entender apenas mensagens de texto 🙂\n"
+                "Pode me escrever sua dúvida aqui?"
+            )
+        )
+
+        return {
+            "statusCode": 200,
+            "body": json.dumps({"status": "non_text_message_ignored"})
+        }
 
     if not user_id or not user_message:
         return {
@@ -612,8 +646,8 @@ def lambda_handler(event, context):
     analysis = parse_message_analysis(output_text)
 
     # Early response for the user
-    if analysis["mensagem_intermediaria"]:
-        print("Calling send text function")
+    if (analysis.get("mensagem_intermediaria") and analysis.get("intencao") != "fallback"):
+        print("Calling send text function (mensagem intermediária)")
         send_text_to_zapi(
             phone=user_id,
             message=analysis["mensagem_intermediaria"]
@@ -655,6 +689,20 @@ def lambda_handler(event, context):
     release_user_mutex(user_id)
 
     # ADD LOG TO METADATA
+
+    print("[FINAL RESPONSE]", json.dumps(
+        {
+            "user_id": user_id,
+            "mensagem_intermediaria": analysis["mensagem_intermediaria"],
+            "mensagem_final": final_message,
+            "tom": analysis["tom"],
+            "riscos": analysis["riscos"],
+            "escalation": escalation_decision,
+            "agent": resolution.get("agent"),
+            "confidence_score": resolution.get("confidence_score")
+        },
+        ensure_ascii=False
+    ))
 
     # Final response (ready for Agent 2)
     return {
