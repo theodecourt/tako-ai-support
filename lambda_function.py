@@ -3,6 +3,8 @@ import boto3
 from pathlib import Path
 import os
 import http.client
+import time
+from botocore.exceptions import ClientError
 
 # Bedrock client
 bedrock = boto3.client(
@@ -488,6 +490,7 @@ def compose_final_message(
 # -------- Enviar mensagem para Z-API --------
 
 def send_text_to_zapi(phone: str, message: str):
+    print("➡️ Z-API SEND TEXT")
     ZAPI_INSTANCE_ID = os.environ["ZAPI_INSTANCE_ID"]
     ZAPI_TOKEN = os.environ["ZAPI_TOKEN"]
     ZAPI_CLIENT_TOKEN = os.environ["ZAPI_CLIENT_TOKEN"]
@@ -523,6 +526,43 @@ def send_text_to_zapi(phone: str, message: str):
     finally:
         conn.close()
 
+
+# -------- Mutex no DynamoDB --------
+
+dynamodb = boto3.resource("dynamodb")
+MUTEX_TABLE_NAME = "tako_user_mutex"
+mutex_table = dynamodb.Table(MUTEX_TABLE_NAME)
+
+def acquire_user_mutex(user_id: str, ttl_seconds: int = 50) -> bool:
+    expires_at = int(time.time()) + ttl_seconds
+
+    try:
+        mutex_table.put_item(
+            Item={
+                "user_id": user_id,
+                "expires_at": expires_at
+            },
+            ConditionExpression="attribute_not_exists(user_id)"
+        )
+        return True
+
+    except ClientError as e:
+        if e.response["Error"]["Code"] == "ConditionalCheckFailedException":
+            return False
+        raise
+
+def release_user_mutex(user_id: str):
+    try:
+        mutex_table.delete_item(
+            Key={"user_id": user_id}
+        )
+        print(f"[MUTEX] Lock liberado para {user_id}")
+
+    except Exception as e:
+        # Não pode quebrar a Lambda
+        print(f"[MUTEX] Erro ao liberar lock para {user_id}: {e}")
+
+
 # -------- Lambda handler --------
 
 def lambda_handler(event, context):
@@ -538,6 +578,15 @@ def lambda_handler(event, context):
         return {
             "statusCode": 200,
             "body": json.dumps({"status": "ignored"})
+        }
+
+    acquired = acquire_user_mutex(user_id)
+
+    if not acquired:
+        print(f"[MUTEX] Mensagem ignorada para user_id={user_id} (lock ativo)")
+        return {
+            "statusCode": 200,
+            "body": json.dumps({"status": "locked"})
         }
     
     # Load base prompt
@@ -564,18 +613,11 @@ def lambda_handler(event, context):
 
     # Early response for the user
     if analysis["mensagem_intermediaria"]:
+        print("Calling send text function")
         send_text_to_zapi(
             phone=user_id,
             message=analysis["mensagem_intermediaria"]
         )
-
-    return {
-            "statusCode": 200,
-            "body": json.dumps({
-                "status": "early_response_sent",
-                "user_id": user_id
-            })
-        }
 
     context = {
         "user_message": user_message,
@@ -602,6 +644,15 @@ def lambda_handler(event, context):
         escalation=escalation_decision,
         tom=analysis["tom"]
     )
+
+    if final_message:
+        print("Calling send text function 2")
+        send_text_to_zapi(
+            phone=user_id,
+            message=final_message
+        )
+
+    release_user_mutex(user_id)
 
     # ADD LOG TO METADATA
 
