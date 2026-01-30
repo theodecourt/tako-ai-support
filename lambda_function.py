@@ -7,7 +7,6 @@ import time
 from botocore.exceptions import ClientError
 from decimal import Decimal
 
-# Bedrock client
 bedrock = boto3.client(
     "bedrock-agent-runtime",
     region_name="us-east-2"
@@ -50,14 +49,12 @@ def invoke_pagamento_atrasado_agent(user_message: str) -> dict:
 
     final_text = ""
 
-    # Agents retornam stream
     for event in response.get("completion", []):
         if "chunk" in event:
             final_text += event["chunk"]["bytes"].decode("utf-8")
 
     final_text = final_text.strip()
 
-    # --- Tratativas simples ---
     if not final_text:
         return {
             "draft_answer": "Não foi possível gerar uma resposta automática para este caso no momento.",
@@ -88,7 +85,6 @@ def invoke_demissao_recisao_agent(user_message: str) -> dict:
 
     final_text = ""
 
-    # Agents retornam stream
     for event in response.get("completion", []):
         if "chunk" in event:
             final_text += event["chunk"]["bytes"].decode("utf-8")
@@ -107,7 +103,6 @@ def invoke_demissao_recisao_agent(user_message: str) -> dict:
     try:
         parsed = json.loads(final_text)
 
-        # Blindagem extra: garante campos mínimos
         return {
             "draft_answer": parsed.get(
                 "draft_answer",
@@ -117,7 +112,6 @@ def invoke_demissao_recisao_agent(user_message: str) -> dict:
         }
 
     except json.JSONDecodeError:
-        # Caso o agente responda texto puro
         return {
             "draft_answer": (
                 "Recebemos sua solicitação sobre demissão ou rescisão. "
@@ -276,7 +270,6 @@ def handle_conformidade_legal(context: dict) -> dict:
 def handle_duvida_geral(context: dict) -> dict:
     user_message = context.get("user_message")
 
-    # Load duvida geral prompt
     base_prompt = load_prompt("duvida_geral_agent")
 
     full_prompt = f"""{base_prompt}
@@ -287,11 +280,9 @@ def handle_duvida_geral(context: dict) -> dict:
     \"\"\"
     """
 
-    # Call Bedrock Flow
     flow_response = invoke_flow(full_prompt)
     agent_output = extract_flow_output(flow_response)
 
-    # Parse agent output
     parsed_output = parser_generico(agent_output)
 
     return {
@@ -308,7 +299,6 @@ def handle_fallback(context: dict) -> dict:
 
     user_message = context.get("user_message", "")
 
-    # Load fallback prompt
     base_prompt = load_prompt("fallback_agent")
 
     full_prompt = f"""{base_prompt}
@@ -319,13 +309,10 @@ def handle_fallback(context: dict) -> dict:
     \"\"\"
     """
 
-    # Invoke Bedrock flow
     flow_response = invoke_flow(full_prompt)
 
-    # Extract raw model output (string)
     output_text = extract_flow_output(flow_response)
 
-    # Parse JSON output
     parsed_output = parser_generico(output_text)
 
     return {
@@ -580,7 +567,6 @@ def release_user_mutex(user_id: str):
         print(f"[MUTEX] Lock liberado para {user_id}")
 
     except Exception as e:
-        # Não pode quebrar a Lambda
         print(f"[MUTEX] Erro ao liberar lock para {user_id}: {e}")
 
 
@@ -627,7 +613,6 @@ def lambda_handler(event, context):
     if body.get("text") and body["text"].get("message"):
         user_message = body["text"]["message"]
     else:
-        # Mensagem não textual (imagem, áudio, etc.)
         send_text_to_zapi(
             phone=user_id,
             message=(
@@ -656,10 +641,8 @@ def lambda_handler(event, context):
             "body": json.dumps({"status": "locked"})
         }
     
-    # Load base prompt
     base_prompt = load_prompt("message_analysis")
 
-    # Compose final prompt
     full_prompt = f"""{base_prompt}
 
     User input:
@@ -669,16 +652,12 @@ def lambda_handler(event, context):
 
     """
 
-    # Invoke Bedrock Flow
     flow_response = invoke_flow(full_prompt)
 
-    # Extract model output (string JSON)
     output_text = extract_flow_output(flow_response)
 
-    # Parse into structured fields
     analysis = parse_message_analysis(output_text)
 
-    # Early response for the user
     if (analysis.get("mensagem_intermediaria") and analysis.get("intencao") != "fallback"):
         print("Calling send text function (mensagem intermediária)")
         send_text_to_zapi(
@@ -730,22 +709,6 @@ def lambda_handler(event, context):
         final_message=final_message
     )
 
-
-    print("[FINAL RESPONSE]", json.dumps(
-        {
-            "user_id": user_id,
-            "mensagem_intermediaria": analysis["mensagem_intermediaria"],
-            "mensagem_final": final_message,
-            "tom": analysis["tom"],
-            "riscos": analysis["riscos"],
-            "escalation": escalation_decision,
-            "agent": resolution.get("agent"),
-            "confidence_score": resolution.get("confidence_score")
-        },
-        ensure_ascii=False
-    ))
-
-    # Final response (ready for Agent 2)
     return {
         "statusCode": 200,
         "body": json.dumps(
@@ -756,7 +719,6 @@ def lambda_handler(event, context):
                 "riscos": analysis["riscos"],
                 "escalation": escalation_decision,
 
-                # Opcional (recomendo manter em staging/debug)
                 "debug": {
                     "agent": resolution.get("agent"),
                     "draft_answer": resolution.get("draft_answer"),
