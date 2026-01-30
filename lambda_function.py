@@ -553,7 +553,8 @@ MUTEX_TABLE_NAME = "tako_user_mutex"
 mutex_table = dynamodb.Table(MUTEX_TABLE_NAME)
 
 def acquire_user_mutex(user_id: str, ttl_seconds: int = 50) -> bool:
-    expires_at = int(time.time()) + ttl_seconds
+    now = int(time.time())
+    expires_at = now + ttl_seconds
 
     try:
         mutex_table.put_item(
